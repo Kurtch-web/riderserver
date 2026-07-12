@@ -171,16 +171,22 @@ async def list_members(current_user: UserResponse = Depends(get_current_user)):
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
 
+    db = get_supabase()
+    members = rows(
+        db.table("users")
+        .select("id, email, full_name")
+        .order("created_at", desc=True)
+        .execute()
+    )
     return [
         UserResponse(
-            id=user["id"],
-            email=user["email"],
-            full_name=user["full_name"],
-            is_active=user.get("is_active", True),
-            is_admin=user.get("is_admin", False),
+            id=str(member["id"]),
+            email=member["email"],
+            full_name=member.get("full_name") or "Unnamed member",
+            is_active=True,
+            is_admin=False,
         )
-        for user in users_db.values()
-        if not user.get("is_admin", False)
+        for member in members
     ]
 
 # Mobile app endpoints

@@ -13,7 +13,7 @@ class UserLogin(BaseModel):
     password: str
 
 class UserResponse(UserBase):
-    id: int
+    id: str | int
     is_active: bool = True
     is_admin: bool = False
     
