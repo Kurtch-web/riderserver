@@ -4,6 +4,8 @@ from fastapi.security import OAuth2PasswordBearer
 from app.models.auth import UserCreate, UserLogin, UserResponse, Token, MobileUserCreate, MobileUserLogin, MobileUserResponse, MobileAuthResponse
 from datetime import datetime, timedelta
 from typing import Optional
+import hashlib
+import secrets
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -182,100 +184,37 @@ async def list_members(current_user: UserResponse = Depends(get_current_user)):
     ]
 
 # Mobile app endpoints
-@router.post("/signup", response_model=MobileAuthResponse, status_code=status.HTTP_201_CREATED)
-async def mobile_signup(user: MobileUserCreate):
-    """Mobile app signup endpoint"""
-    global user_id_counter
-    
-    # Check if user already exists
-    for existing_user in users_db.values():
-        if existing_user["email"] == user.email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
-    
-    # Create new user with mobile-specific fields
-    new_user = {
-        "id": str(user_id_counter),
-        "email": user.email,
-        "password": user.password,
-        "full_name": user.full_name,
-        "device_id": user.device_id,
-        "device_name": user.device_name,
-        "emergency_contact1_name": user.emergency_contact1_name,
-        "emergency_contact1_phone": user.emergency_contact1_phone,
-        "emergency_contact2_name": user.emergency_contact2_name,
-        "emergency_contact2_phone": user.emergency_contact2_phone,
-        "birthday": user.birthday,
-        "address": user.address,
-        "is_active": True,
-        "created_at": datetime.utcnow()
-    }
-    
-    users_db[user_id_counter] = new_user
-    user_id_counter += 1
-    
-    # Create access token
-    access_token = create_access_token(data={"sub": user.email})
-    
-    return MobileAuthResponse(
-        access_token=access_token,
-        refresh_token=None,
-        user=MobileUserResponse(
-            id=new_user["id"],
-            device_id=new_user["device_id"],
-            device_name=new_user["device_name"],
-            full_name=new_user["full_name"],
-            emergency_contact1_name=new_user["emergency_contact1_name"],
-            emergency_contact1_phone=new_user["emergency_contact1_phone"],
-            emergency_contact2_name=new_user["emergency_contact2_name"],
-            emergency_contact2_phone=new_user["emergency_contact2_phone"],
-            birthday=new_user["birthday"],
-            address=new_user["address"]
-        )
-    )
+from app.core.database import get_supabase, rows
 
-@router.post("/signin", response_model=MobileAuthResponse)
-async def mobile_signin(user: MobileUserLogin):
-    """Mobile app signin endpoint"""
-    # Find user by email
-    user_data = None
-    for u in users_db.values():
-        if u["email"] == user.email:
-            user_data = u
-            break
-    
-    if not user_data:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 120_000)
+    return f"pbkdf2_sha256$120000${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        algorithm, rounds, salt_hex, digest_hex = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds)
         )
-    
-    # Verify password
-    if user_data["password"] != user.password:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
-    # Update device info if provided
-    if user.device_id:
-        user_data["device_id"] = user.device_id
-    if user.device_name:
-        user_data["device_name"] = user.device_name
-    
-    # Create access token
-    access_token = create_access_token(data={"sub": user.email})
-    
+        return secrets.compare_digest(digest.hex(), digest_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+def mobile_response(user_data: dict) -> MobileAuthResponse:
     return MobileAuthResponse(
-        access_token=access_token,
+        access_token=create_access_token(data={"sub": user_data["email"]}),
         refresh_token=None,
         user=MobileUserResponse(
-            id=user_data["id"],
+            id=str(user_data["id"]),
             device_id=user_data["device_id"],
-            device_name=user_data["device_name"],
-            full_name=user_data["full_name"],
+            device_name=user_data.get("device_name"),
+            full_name=user_data.get("full_name"),
             emergency_contact1_name=user_data.get("emergency_contact1_name"),
             emergency_contact1_phone=user_data.get("emergency_contact1_phone"),
             emergency_contact2_name=user_data.get("emergency_contact2_name"),
@@ -284,3 +223,32 @@ async def mobile_signin(user: MobileUserLogin):
             address=user_data.get("address")
         )
     )
+
+
+@router.post("/signup", response_model=MobileAuthResponse, status_code=status.HTTP_201_CREATED)
+async def mobile_signup(user: MobileUserCreate):
+    db = get_supabase()
+    if rows(db.table("users").select("id").eq("email", user.email).limit(1).execute()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    values = user.model_dump()
+    values["password"] = hash_password(user.password)
+    created = rows(db.table("users").insert(values).execute())
+    return mobile_response(created[0])
+
+
+@router.post("/signin", response_model=MobileAuthResponse)
+async def mobile_signin(user: MobileUserLogin):
+    db = get_supabase()
+    matches = rows(db.table("users").select("*").eq("email", user.email).limit(1).execute())
+    user_data = matches[0] if matches else None
+    if not user_data or not verify_password(user.password, user_data.get("password", "")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+
+    updated = rows(
+        db.table("users")
+        .update({"device_id": user.device_id, "device_name": user.device_name})
+        .eq("id", user_data["id"])
+        .execute()
+    )
+    return mobile_response(updated[0] if updated else {**user_data, "device_id": user.device_id, "device_name": user.device_name})
