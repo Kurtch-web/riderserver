@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import sensors, auth, mobile
+from app.api.routes import sensors, auth, mobile, crashes
 from app.core.config import settings
 
 app = FastAPI(
@@ -22,6 +22,7 @@ app.add_middleware(
 app.include_router(sensors.router, prefix="/api/sensors", tags=["sensors"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(mobile.router, prefix="/api", tags=["mobile"])
+app.include_router(crashes.router, prefix="/api/crashes", tags=["crashes"])
 
 @app.get("/")
 async def root():

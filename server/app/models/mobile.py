@@ -54,8 +54,21 @@ class FcmTokenCreate(BaseModel):
 
 class CrashNotificationCreate(BaseModel):
     to_user_id: str = Field(alias="toUserId")
+    device_id: Optional[str] = Field(default=None, alias="deviceId")
     device_name: str = Field(alias="deviceName")
     message: str
+    crash_time: datetime = Field(alias="crashTime")
+    g_force: float = Field(default=0, alias="gForce")
+    accel_x: float = Field(default=0, alias="accelX")
+    accel_y: float = Field(default=0, alias="accelY")
+    accel_z: float = Field(default=0, alias="accelZ")
+    gyro_x: float = Field(default=0, alias="gyroX")
+    gyro_y: float = Field(default=0, alias="gyroY")
+    gyro_z: float = Field(default=0, alias="gyroZ")
+    temperature: Optional[float] = None
+    gps_latitude: Optional[float] = Field(default=None, alias="gpsLatitude")
+    gps_longitude: Optional[float] = Field(default=None, alias="gpsLongitude")
+    gps_altitude: Optional[float] = Field(default=None, alias="gpsAltitude")
 
     model_config = ConfigDict(populate_by_name=True)
 

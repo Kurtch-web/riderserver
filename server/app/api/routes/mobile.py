@@ -134,13 +134,52 @@ def update_fcm_token(request: FcmTokenCreate) -> dict[str, str]:
 
 
 @router.post("/notifications/send-crash")
-def send_crash_notification(request: CrashNotificationCreate) -> dict[str, str]:
-    get_supabase().table("notifications").insert(
-        {
-            "user_id": request.to_user_id,
-            "device_name": request.device_name,
-            "message": request.message,
-            "type": "crash",
-        }
-    ).execute()
-    return {"status": "queued"}
+def send_crash_notification(
+    request: CrashNotificationCreate,
+    current_user: dict[str, Any] = Depends(current_user),
+) -> dict[str, str]:
+    if str(current_user["id"]) != request.to_user_id:
+        raise HTTPException(status_code=403, detail="Crash owner does not match authenticated user")
+
+    db = get_supabase()
+    users = rows(
+        db.table("users")
+        .select("id, full_name, emergency_contact1_name, emergency_contact1_phone, emergency_contact2_name, emergency_contact2_phone")
+        .eq("id", request.to_user_id)
+        .limit(1)
+        .execute()
+    )
+    if not users:
+        raise HTTPException(status_code=404, detail="Crash owner not found")
+
+    user = users[0]
+    crash = rows(
+        db.table("crash_events")
+        .insert(
+            {
+                "user_id": str(user["id"]),
+                "device_id": request.device_id,
+                "device_name": request.device_name,
+                "crash_time": request.crash_time.isoformat(),
+                "message": request.message,
+                "g_force": request.g_force,
+                "accel_x": request.accel_x,
+                "accel_y": request.accel_y,
+                "accel_z": request.accel_z,
+                "gyro_x": request.gyro_x,
+                "gyro_y": request.gyro_y,
+                "gyro_z": request.gyro_z,
+                "temperature": request.temperature,
+                "gps_latitude": request.gps_latitude,
+                "gps_longitude": request.gps_longitude,
+                "gps_altitude": request.gps_altitude,
+                "rider_name": user.get("full_name"),
+                "emergency_contact1_name": user.get("emergency_contact1_name"),
+                "emergency_contact1_phone": user.get("emergency_contact1_phone"),
+                "emergency_contact2_name": user.get("emergency_contact2_name"),
+                "emergency_contact2_phone": user.get("emergency_contact2_phone"),
+            }
+        )
+        .execute()
+    )
+    return {"status": "recorded", "crash_id": str(crash[0]["id"])}
