@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from datetime import datetime, timezone
 from secrets import choice
 from string import ascii_uppercase, digits
 from typing import Any
@@ -90,6 +91,7 @@ class MobileService:
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .execute()
+        )
         return [
             {
                 "code": item["code"],
